@@ -27,7 +27,6 @@ FOOTBALL_KEY = os.environ.get("FOOTBALL_DATA_KEY")
 PANDA_KEY = os.environ.get("PANDASCORE_KEY")
 # ---------------- EDIT THESE ----------------
 # football-data.org free competitions: PL, CL, PD
-(La Liga), SA, BL1, FL1, WC, EC
 COMPETITIONS = "PL,CL,PD,SA,BL1,FL1,WC,EC"
 ALWAYS_SHOW = {"CL", "WC", "EC"} # always
 shown
