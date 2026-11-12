@@ -1,217 +1,319 @@
-"""
-Jarvis: personal Telegram bot.
-Modes (python bot.py <mode>):
-digest -> morning summary of football + CS
-matches in the next 24h
-remind -> ping for matches starting in ~20-30
-min (run every 10 min)
-news -> gaming/tech headlines from the last
-hour that match KEYWORDS (run hourly)
-No external dependencies, only the Python standard
-library.
-"""
-import os
-import sys
-import json
-import html
-import urllib.request
-import datetime as dt
-import xml.etree.ElementTree as ET
-from email.utils import parsedate_to_datetime
-from zoneinfo import ZoneInfo
-TZ = ZoneInfo("Asia/Tehran")
-NOW = dt.datetime.now(dt.timezone.utc)
-TG_TOKEN = os.environ["TELEGRAM_TOKEN"]
-TG_CHAT = os.environ["TELEGRAM_CHAT_ID"]
-FOOTBALL_KEY = os.environ.get("FOOTBALL_DATA_KEY")
-PANDA_KEY = os.environ.get("PANDASCORE_KEY")
-# ---------------- EDIT THESE ----------------
-# football-data.org free competitions: PL, CL, PD
-(La Liga), SA, BL1, FL1, WC, EC
-COMPETITIONS = "PL,CL,PD,SA,BL1,FL1,WC,EC"
-ALWAYS_SHOW = {"CL", "WC", "EC"} # always
-shown
-FAVORITE_TEAMS = [] # e.g.
-["Barcelona", "Real Madrid"]; empty = all league
-matches
-CS_TIERS = {"s", "a"} #
-PandaScore tournament tiers to include
-CS_FAVORITES = ["Vitality", "FURIA"] #
-always shown, any tier
+# Jarvis bot. Edit only the SETTINGS block.
+import base64
+# ---- SETTINGS ----
+# Leagues: PL CL PD SA BL1 FL1 WC EC
+LEAGUES = "PL,CL,PD,SA,BL1,FL1,WC,EC"
+# Always shown
+ALWAYS = {"CL", "WC", "EC"}
+# Favorite teams, empty = all
+TEAMS = []
+# CS tiers
+TIERS = {"s", "a"}
+# CS teams always shown
+CS_TEAMS = [
+"Vitality", "FURIA",
+"Spirit", "Falcons",
+"NAVI", "Natus Vincere",
+"MOUZ", "OxinGame",
+]
 FEEDS = [
 "https://feeds.ign.com/ign/news",
 "https://www.theverge.com/rss/index.xml",
 "https://www.eurogamer.net/feed",
 ]
-KEYWORDS = [
-"gta", "ps6", "playstation 6", "switch 2",
-"xbox", "nintendo", "steam", "valve",
-"counter-strike", "cs2", "nvidia", "rtx",
-"amd", "release date", "announced",
-"layoffs", "acquires", "acquisition",
-"openai", "anthropic", "apple", "iphone",
-"elden ring", "hollow knight", "witcher",
-"cyberpunk", "battlefield", "call of duty",
+WORDS = [
+"gta", "ps6", "playstation 6",
+"switch 2", "xbox", "nintendo",
+"steam", "valve", "counter-strike",
+"cs2", "nvidia", "rtx", "amd",
+"release date", "announced",
+"layoffs", "acquires", "openai",
+"anthropic", "apple", "iphone",
+"elden ring", "hollow knight",
+"witcher", "cyberpunk",
+"battlefield", "call of duty",
 ]
-# --------------------------------------------
-def http_json(url, headers=None):
-req = urllib.request.Request(url,
-headers=headers or {})
-with urllib.request.urlopen(req, timeout=30)
-as r:
-return json.load(r)
-def parse_iso(s):
-return
-dt.datetime.fromisoformat(s.replace("Z",
-"+00:00"))
-def send(text):
-data = json.dumps({
-"chat_id": TG_CHAT,
-"text": text,
-"parse_mode": "HTML",
-"disable_web_page_preview": True,
-}).encode()
-req = urllib.request.Request(
-f"https://api.telegram.org/bot{TG_TOKEN}/sendMessa
-ge",
-data=data,
-headers={"Content-Type":
-"application/json"},
+# ---- END SETTINGS ----
+CODE = (
+"IyBKYXJ2aXMgYm90CiMgcHl0aG9uIGJvdC5weSBkaWdlc3Qgf
+CByZW1pbmQg"
+"fCBuZXdzCmltcG9ydCBvcwppbXBvcnQgc3lzCmltcG9ydCBqc
+29uCmltcG9y"
+"dCBodG1sCmltcG9ydCB1cmxsaWIucmVxdWVzdCBhcyB1cgppb
+XBvcnQgZGF0"
+"ZXRpbWUgYXMgZHQKaW1wb3J0IHhtbC5ldHJlZS5FbGVtZW50V
+HJlZSBhcyBF"
+"VApmcm9tIGVtYWlsLnV0aWxzIGltcG9ydCBwYXJzZWRhdGVfd
+G9fZGF0ZXRp"
+"bWUKZnJvbSB6b25laW5mbyBpbXBvcnQgWm9uZUluZm8KClRaI
+D0gWm9uZUlu"
+"Zm8oIkFzaWEvVGVocmFuIikKVVRDID0gZHQudGltZXpvbmUud
+XRjCk5PVyA9"
+"IGR0LmRhdGV0aW1lLm5vdyhVVEMpCkhPVVIgPSBkdC50aW1lZ
+GVsdGEoaG91"
+"cnM9MSkKClRPS0VOID0gb3MuZW52aXJvblsiVEVMRUdSQU1fV
+E9LRU4iXQpD"
+"SEFUID0gb3MuZW52aXJvblsiVEVMRUdSQU1fQ0hBVF9JRCJdC
+kZCX0tFWSA9"
+"IG9zLmVudmlyb24uZ2V0KCJGT09UQkFMTF9EQVRBX0tFWSIpC
+lBTX0tFWSA9"
+"IG9zLmVudmlyb24uZ2V0KCJQQU5EQVNDT1JFX0tFWSIpCgoKC
+gpkZWYgZ2V0"
+"X2pzb24odXJsLCBoZWFkZXJzKToKICAgIHJlcSA9IHVyLlJlc
+XVlc3QodXJs"
+"LCBoZWFkZXJzPWhlYWRlcnMpCiAgICB3aXRoIHVyLnVybG9wZ
+W4ocmVxLCB0"
+"aW1lb3V0PTMwKSBhcyByOgogICAgICAgIHJldHVybiBqc29uL
+mxvYWQocikK"
+"CgpkZWYgaXNvKHMpOgogICAgcyA9IHMucmVwbGFjZSgiWiIsI
+CIrMDA6MDAi"
+"KQogICAgcmV0dXJuIGR0LmRhdGV0aW1lLmZyb21pc29mb3JtY
+XQocykKCgpk"
+"ZWYgc2VuZCh0ZXh0KToKICAgIGJvZHkgPSB7CiAgICAgICAgI
+mNoYXRfaWQi"
+"OiBDSEFULAogICAgICAgICJ0ZXh0IjogdGV4dCwKICAgICAgI
+CAicGFyc2Vf"
+"bW9kZSI6ICJIVE1MIiwKICAgICAgICAiZGlzYWJsZV93ZWJfc
+GFnZV9wcmV2"
+"aWV3IjogVHJ1ZSwKICAgIH0KICAgIHVybCA9ICJodHRwczovL
+2FwaS50ZWxl"
+"Z3JhbS5vcmcvYm90IgogICAgdXJsID0gdXJsICsgVE9LRU4gK
+yAiL3NlbmRN"
+"ZXNzYWdlIgogICAgcmVxID0gdXIuUmVxdWVzdCgKICAgICAgI
+CB1cmwsCiAg"
+"ICAgICAgZGF0YT1qc29uLmR1bXBzKGJvZHkpLmVuY29kZSgpL
+AogICAgICAg"
+"IGhlYWRlcnM9ewogICAgICAgICAgICAiQ29udGVudC1UeXBlI
+jogImFwcGxp"
+"Y2F0aW9uL2pzb24iCiAgICAgICAgfSwKICAgICkKICAgIHVyL
+nVybG9wZW4o"
+"cmVxLCB0aW1lb3V0PTMwKS5yZWFkKCkKCgpkZWYgZm9vdGJhb
+GwoKToKICAg"
+"IGlmIG5vdCBGQl9LRVk6CiAgICAgICAgcmV0dXJuIFtdCiAgI
+CBkMSA9IE5P"
+"Vy5kYXRlKCkuaXNvZm9ybWF0KCkKICAgIGVuZCA9IE5PVyArI
+GR0LnRpbWVk"
+"ZWx0YShkYXlzPTIpCiAgICBkMiA9IGVuZC5kYXRlKCkuaXNvZ
+m9ybWF0KCkK"
+"ICAgIHVybCA9ICgKICAgICAgICAiaHR0cHM6Ly9hcGkuZm9vd
+GJhbGwtZGF0"
+"YS5vcmciCiAgICAgICAgIi92NC9tYXRjaGVzP2RhdGVGcm9tP
+SIgKyBkMQog"
+"ICAgICAgICsgIiZkYXRlVG89IiArIGQyCiAgICAgICAgKyAiJ
+mNvbXBldGl0"
+"aW9ucz0iICsgTEVBR1VFUwogICAgKQogICAgaGRyID0geyJYL
+UF1dGgtVG9r"
+"ZW4iOiBGQl9LRVl9CiAgICBkYXRhID0gZ2V0X2pzb24odXJsL
+CBoZHIpCiAg"
+"ICBvdXQgPSBbXQogICAgZm9yIG0gaW4gZGF0YS5nZXQoIm1hd
+GNoZXMiLCBb"
+"XSk6CiAgICAgICAgY29tcCA9IG1bImNvbXBldGl0aW9uIl0KI
+CAgICAgICBj"
+"b2RlID0gY29tcC5nZXQoImNvZGUiLCAiIikKICAgICAgICBob
+21lID0gbVsi"
+"aG9tZVRlYW0iXVsibmFtZSJdCiAgICAgICAgYXdheSA9IG1bI
+mF3YXlUZWFt"
+"Il1bIm5hbWUiXQogICAgICAgIG5hbWVzID0gKGhvbWUgKyBhd
+2F5KS5sb3dl"
+"cigpCiAgICAgICAgaWYgY29kZSBub3QgaW4gQUxXQVlTIGFuZ
+CBURUFNUzoK"
+"ICAgICAgICAgICAgaWYgbm90IGFueSgKICAgICAgICAgICAgI
+CAgIHQubG93"
+"ZXIoKSBpbiBuYW1lcwogICAgICAgICAgICAgICAgZm9yIHQga
+W4gVEVBTVMK"
+"ICAgICAgICAgICAgKToKICAgICAgICAgICAgICAgIGNvbnRpb
+nVlCiAgICAg"
+"ICAgb3V0LmFwcGVuZCh7CiAgICAgICAgICAgICJzdGFydCI6I
+GlzbyhtWyJ1"
+"dGNEYXRlIl0pLAogICAgICAgICAgICAidGl0bGUiOiBob21lI
+CsgIiB2cyAi"
+"ICsgYXdheSwKICAgICAgICAgICAgImNvbXAiOiBjb21wWyJuY
+W1lIl0sCiAg"
+"ICAgICAgICAgICJpY29uIjogIuKavSIsCiAgICAgICAgfSkKI
+CAgIHJldHVy"
+"biBvdXQKCgpkZWYgY3MoKToKICAgIGlmIG5vdCBQU19LRVk6C
+iAgICAgICAg"
+"cmV0dXJuIFtdCiAgICB1cmwgPSAoCiAgICAgICAgImh0dHBzO
+i8vYXBpLnBh"
+"bmRhc2NvcmUuY28iCiAgICAgICAgIi9jc2dvL21hdGNoZXMvd
+XBjb21pbmci"
+"CiAgICAgICAgIj9zb3J0PWJlZ2luX2F0JnBhZ2Vbc2l6ZV09N
+TAiCiAgICAp"
+"CiAgICBoZHIgPSB7IkF1dGhvcml6YXRpb24iOiAiQmVhcmVyI
+CIgKyBQU19L"
+"RVl9CiAgICBvdXQgPSBbXQogICAgZm9yIG0gaW4gZ2V0X2pzb
+24odXJsLCBo"
+"ZHIpOgogICAgICAgIGlmIG5vdCBtLmdldCgiYmVnaW5fYXQiK
+ToKICAgICAg"
+"ICAgICAgY29udGludWUKICAgICAgICBvcHBzID0gbS5nZXQoI
+m9wcG9uZW50"
+"cyIsIFtdKQogICAgICAgIG5hbWVzID0gWwogICAgICAgICAgI
+CBvWyJvcHBv"
+"bmVudCJdWyJuYW1lIl0KICAgICAgICAgICAgZm9yIG8gaW4gb
+3BwcwogICAg"
+"ICAgICAgICBpZiBvLmdldCgib3Bwb25lbnQiKQogICAgICAgI
+F0KICAgICAg"
+"ICBpZiBuYW1lczoKICAgICAgICAgICAgdGl0bGUgPSAiIHZzI
+CIuam9pbihu"
+"YW1lcykKICAgICAgICBlbHNlOgogICAgICAgICAgICB0aXRsZ
+SA9IG0uZ2V0"
+"KCJuYW1lIiwgIlRCRCIpCiAgICAgICAgdG91ciA9IG0uZ2V0K
+CJ0b3VybmFt"
+"ZW50Iikgb3Ige30KICAgICAgICB0aWVyID0gKHRvdXIuZ2V0K
+CJ0aWVyIikg"
+"b3IgIiIpLmxvd2VyKCkKICAgICAgICBsb3cgPSB0aXRsZS5sb
+3dlcigpCiAg"
+"ICAgICAgZmF2ID0gYW55KAogICAgICAgICAgICBmLmxvd2VyK
+CkgaW4gbG93"
+"CiAgICAgICAgICAgIGZvciBmIGluIENTX1RFQU1TCiAgICAgI
+CAgKQogICAg"
+"ICAgIGlmIHRpZXIgbm90IGluIFRJRVJTIGFuZCBub3QgZmF2O
+gogICAgICAg"
+"ICAgICBjb250aW51ZQogICAgICAgIGxnID0gbS5nZXQoImxlY
+Wd1ZSIpIG9y"
+"IHt9CiAgICAgICAgc2UgPSBtLmdldCgic2VyaWUiKSBvciB7f
+QogICAgICAg"
+"IGNvbXAgPSBsZy5nZXQoIm5hbWUiLCAiIikKICAgICAgICBjb
+21wID0gY29t"
+"cCArICIgIiArIHNlLmdldCgiZnVsbF9uYW1lIiwgIiIpCiAgI
+CAgICAgb3V0"
+"LmFwcGVuZCh7CiAgICAgICAgICAgICJzdGFydCI6IGlzbyhtW
+yJiZWdpbl9h"
+"dCJdKSwKICAgICAgICAgICAgInRpdGxlIjogdGl0bGUsCiAgI
+CAgICAgICAg"
+"ICJjb21wIjogY29tcC5zdHJpcCgpLAogICAgICAgICAgICAia
+WNvbiI6ICLw"
+"n46uIiwKICAgICAgICB9KQogICAgcmV0dXJuIG91dAoKCmRlZ
+iB1cGNvbWlu"
+"Zyhob3Vycyk6CiAgICBpdGVtcyA9IFtdCiAgICBmb3IgZm4ga
+W4gKGZvb3Ri"
+"YWxsLCBjcyk6CiAgICAgICAgdHJ5OgogICAgICAgICAgICBpd
+GVtcyArPSBm"
+"bigpCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogI
+CAgICAgICAg"
+"ICBwcmludChmbi5fX25hbWVfXywgZSwgZmlsZT1zeXMuc3RkZ
+XJyKQogICAg"
+"ZW5kID0gTk9XICsgaG91cnMgKiBIT1VSCiAgICBpdGVtcyA9I
+FsKICAgICAg"
+"ICBpIGZvciBpIGluIGl0ZW1zCiAgICAgICAgaWYgTk9XIDw9I
+GlbInN0YXJ0"
+"Il0gPD0gZW5kCiAgICBdCiAgICByZXR1cm4gc29ydGVkKGl0Z
+W1zLCBrZXk9"
+"bGFtYmRhIGk6IGlbInN0YXJ0Il0pCgoKZGVmIGZtdChpKToKI
+CAgIHQgPSBp"
+"WyJzdGFydCJdLmFzdGltZXpvbmUoVFopCiAgICB0ID0gdC5zd
+HJmdGltZSgi"
+"JUg6JU0iKQogICAgdGl0bGUgPSBodG1sLmVzY2FwZShpWyJ0a
+XRsZSJdKQog"
+"ICAgY29tcCA9IGh0bWwuZXNjYXBlKGlbImNvbXAiXSkKICAgI
+GxpbmUxID0g"
+"aVsiaWNvbiJdICsgIiA8Yj4iICsgdGl0bGUgKyAiPC9iPiIKI
+CAgIGxpbmUy"
+"ID0gIiAgICIgKyB0ICsgIiAoVGVocmFuKSAtICIgKyBjb21wC
+iAgICByZXR1"
+"cm4gbGluZTEgKyAiXG4iICsgbGluZTIKCgpkZWYgZGlnZXN0K
+Ck6CiAgICBp"
+"dGVtcyA9IHVwY29taW5nKDI0KQogICAgaWYgbm90IGl0ZW1zO
+gogICAgICAg"
+"IHNlbmQoIti12KjYrSDYqNiu24zYsSDwn5i0INio2KfYstuMI
+NmF2YfZhduM"
+"INmG2K/Yp9ix24wuIikKICAgICAgICByZXR1cm4KICAgIHRle
+HQgPSAiXG5c"
+"biIuam9pbihmbXQoaSkgZm9yIGkgaW4gaXRlbXMpCiAgICBzZ
+W5kKCLYtdio"
+"2K0g2KjYrtuM2LEg4piA77iPINio2LHZhtin2YXZhyDbstu0I
+Niz2KfYudiq"
+"INii24zZhtiv2Yc6XG5cbiIgKyB0ZXh0KQoKCmRlZiByZW1pb
+mQoKToKICAg"
+"IGZvciBpIGluIHVwY29taW5nKDEpOgogICAgICAgIHNlY3MgP
+SAoaVsic3Rh"
+"cnQiXSAtIE5PVykudG90YWxfc2Vjb25kcygpCiAgICAgICAgb
+WlucyA9IHNl"
+"Y3MgLyA2MAogICAgICAgIGlmIDIwIDwgbWlucyA8PSAzMDoKI
+CAgICAgICAg"
+"ICAgbXNnID0gIuKPsCDZhtuM2YUg2LPYp9i52Kog2K/bjNqv2
+Ycg2LTYsdmI"
+"2Lkg2YXbjNi02Yc6IgogICAgICAgICAgICBzZW5kKG1zZyArI
+CJcblxuIiAr"
+"IGZtdChpKSkKCgpkZWYgZmVlZF9pdGVtcyh1cmwpOgogICAgc
+mVxID0gdXIu"
+"UmVxdWVzdCgKICAgICAgICB1cmwsCiAgICAgICAgaGVhZGVyc
+z17IlVzZXIt"
+"QWdlbnQiOiAiamFydmlzIn0sCiAgICApCiAgICByYXcgPSB1c
+i51cmxvcGVu"
+"KHJlcSwgdGltZW91dD0zMCkucmVhZCgpCiAgICByb290ID0gR
+VQuZnJvbXN0"
+"cmluZyhyYXcpCiAgICBucyA9ICJ7aHR0cDovL3d3dy53My5vc
+mcvMjAwNS9B"
+"dG9tfSIKICAgIGZvciBpdCBpbiByb290Lml0ZXIoIml0ZW0iK
+ToKICAgICAg"
+"ICBkID0gaXQuZmluZHRleHQoInB1YkRhdGUiKQogICAgICAgI
+GlmIGQ6CiAg"
+"ICAgICAgICAgIHlpZWxkICgKICAgICAgICAgICAgICAgIGl0L
+mZpbmR0ZXh0"
+"KCJ0aXRsZSIsICIiKSwKICAgICAgICAgICAgICAgIGl0LmZpb
+mR0ZXh0KCJs"
+"aW5rIiwgIiIpLAogICAgICAgICAgICAgICAgcGFyc2VkYXRlX
+3RvX2RhdGV0"
+"aW1lKGQpLAogICAgICAgICAgICApCiAgICBmb3IgaXQgaW4gc
+m9vdC5pdGVy"
+"KG5zICsgImVudHJ5Iik6CiAgICAgICAgZCA9IGl0LmZpbmR0Z
+Xh0KG5zICsg"
+"InB1Ymxpc2hlZCIpCiAgICAgICAgZCA9IGQgb3IgaXQuZmluZ
+HRleHQobnMg"
+"KyAidXBkYXRlZCIpCiAgICAgICAgbGluayA9IGl0LmZpbmQob
+nMgKyAibGlu"
+"ayIpCiAgICAgICAgaHJlZiA9ICIiCiAgICAgICAgaWYgbGlua
+yBpcyBub3Qg"
+"Tm9uZToKICAgICAgICAgICAgaHJlZiA9IGxpbmsuZ2V0KCJoc
+mVmIikKICAg"
+"ICAgICBpZiBkOgogICAgICAgICAgICB0aXRsZSA9IGl0LmZpb
+mR0ZXh0KG5z"
+"ICsgInRpdGxlIiwgIiIpCiAgICAgICAgICAgIHlpZWxkIHRpd
+GxlLCBocmVm"
+"LCBpc28oZCkKCgpkZWYgbmV3cygpOgogICAgc2VlbiA9IHNld
+CgpCiAgICBo"
+"aXRzID0gW10KICAgIG1heGFnZSA9IGR0LnRpbWVkZWx0YShta
+W51dGVzPTY1"
+"KQogICAgZm9yIHVybCBpbiBGRUVEUzoKICAgICAgICB0cnk6C
+iAgICAgICAg"
+"ICAgIGZvciB0aXRsZSwgbGluaywgd2hlbiBpbiBmZWVkX2l0Z
+W1zKHVybCk6"
+"CiAgICAgICAgICAgICAgICBpZiB3aGVuLnR6aW5mbyBpcyBOb
+25lOgogICAg"
+"ICAgICAgICAgICAgICAgIHdoZW4gPSB3aGVuLnJlcGxhY2Uod
+HppbmZvPVVU"
+"QykKICAgICAgICAgICAgICAgIGlmIE5PVyAtIHdoZW4gPiBtY
+XhhZ2U6CiAg"
+"ICAgICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgI
+CAgICAgIGlm"
+"IHRpdGxlIGluIHNlZW46CiAgICAgICAgICAgICAgICAgICAgY
+29udGludWUK"
+"ICAgICAgICAgICAgICAgIGxvdyA9IHRpdGxlLmxvd2VyKCkKI
+CAgICAgICAg"
+"ICAgICAgIGlmIGFueShrIGluIGxvdyBmb3IgayBpbiBXT1JEU
+yk6CiAgICAg"
+"ICAgICAgICAgICAgICAgc2Vlbi5hZGQodGl0bGUpCiAgICAgI
+CAgICAgICAg"
+"ICAgICAgaGl0cy5hcHBlbmQoKHRpdGxlLCBsaW5rKSkKICAgI
+CAgICBleGNl"
+"cHQgRXhjZXB0aW9uIGFzIGU6CiAgICAgICAgICAgIHByaW50K
+CJmZWVkIGZh"
+"aWxlZCIsIGUsIGZpbGU9c3lzLnN0ZGVycikKICAgIGZvciB0a
+XRsZSwgbGlu"
+"ayBpbiBoaXRzWzo4XToKICAgICAgICB0ID0gaHRtbC5lc2Nhc
+GUodGl0bGUp"
+"CiAgICAgICAgc2VuZCgi8J+TsCA8Yj4iICsgdCArICI8L2I+X
+G4iICsgbGlu"
+"aykKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgb
+W9kZSA9ICJk"
+"aWdlc3QiCiAgICBpZiBsZW4oc3lzLmFyZ3YpID4gMToKICAgI
+CAgICBtb2Rl"
+"ID0gc3lzLmFyZ3ZbMV0KICAgIG1vZGVzID0gewogICAgICAgI
+CJkaWdlc3Qi"
+"OiBkaWdlc3QsCiAgICAgICAgInJlbWluZCI6IHJlbWluZCwKI
+CAgICAgICAi"
+"bmV3cyI6IG5ld3MsCiAgICB9CiAgICBtb2Rlc1ttb2RlXSgpC
+g=="
 )
-urllib.request.urlopen(req, timeout=30).read()
-def football_matches():
-if not FOOTBALL_KEY:
-return []
-d1 = NOW.date().isoformat()
-d2 = (NOW +
-dt.timedelta(days=2)).date().isoformat()
-url = (f"https://api.footballdata.org/v4/matches?dateFrom={d1}&dateTo={d2}"
-f"&competitions={COMPETITIONS}")
-out = []
-for m in http_json(url, {"X-Auth-Token":
-FOOTBALL_KEY}).get("matches", []):
-code = m["competition"].get("code", "")
-home, away = m["homeTeam"]["name"],
-m["awayTeam"]["name"]
-if code not in ALWAYS_SHOW and
-FAVORITE_TEAMS:
-if not any(t.lower() in (home +
-away).lower() for t in FAVORITE_TEAMS):
-continue
-out.append({
-"start": parse_iso(m["utcDate"]),
-"title": f"{home} vs {away}",
-"comp": m["competition"]["name"],
-"icon": "⚽",
-})
-return out
-def cs_matches():
-if not PANDA_KEY:
-return []
-url =
-"https://api.pandascore.co/csgo/matches/upcoming?
-sort=begin_at&page[size]=50"
-out = []
-for m in http_json(url, {"Authorization":
-f"Bearer {PANDA_KEY}"}):
-if not m.get("begin_at"):
-continue
-names = [o["opponent"]["name"] for o in
-m.get("opponents", []) if o.get("opponent")]
-title = " vs ".join(names) if names else
-m.get("name", "TBD")
-tier = ((m.get("tournament") or
-{}).get("tier") or "").lower()
-fav = any(f.lower() in title.lower() for f
-in CS_FAVORITES)
-if tier not in CS_TIERS and not fav:
-continue
-league = (m.get("league") or
-{}).get("name", "")
-serie = (m.get("serie") or
-{}).get("full_name", "")
-out.append({
-"start": parse_iso(m["begin_at"]),
-"title": title,
-"comp": f"{league} {serie}".strip(),
-"icon": "🎮",
-})
-return out
-def upcoming(hours):
-items = []
-for fn in (football_matches, cs_matches):
-try:
-items += fn()
-except Exception as e: # one broken
-source shouldn't kill the rest
-print(f"{fn.__name__} failed: {e}",
-file=sys.stderr)
-items = [i for i in items if NOW <= i["start"]
-<= NOW + dt.timedelta(hours=hours)]
-return sorted(items, key=lambda i: i["start"])
-def fmt(i):
-t =
-i["start"].astimezone(TZ).strftime("%H:%M")
-return f'{i["icon"]} <b>
-{html.escape(i["title"])}</b>\n {t} (Tehran) ·
-{html.escape(i["comp"])}'
-def digest():
-items = upcoming(24)
-if not items:
-حبص ریخب �� وت ۲۴ تعاس آینده بازی یمهم ندارم")send
-(".برات
-return
-+ "n\n\:حبص ریخب ️☀ همانرب ۲۴ تعاس آینده")send
-"\n\n".join(fmt(i) for i in items))
-def remind():
-for i in upcoming(1):
-mins = (i["start"] - NOW).total_seconds()
-/ 60
-if 20 < mins <= 30:
-+ "n\n\:مین تعاس هگید شروع هشیم ⏰")send
-fmt(i))
-def feed_items(url):
-root = ET.fromstring(urllib.request.urlopen(
-urllib.request.Request(url, headers=
-{"User-Agent": "jarvis-bot"}), timeout=30).read())
-ns = "{http://www.w3.org/2005/Atom}"
-for it in root.iter("item"): # RSS
-d = it.findtext("pubDate")
-if d:
-yield it.findtext("title", ""),
-it.findtext("link", ""), parsedate_to_datetime(d)
-for it in root.iter(ns + "entry"): # Atom
-d = it.findtext(ns + "published") or
-it.findtext(ns + "updated")
-link = it.find(ns + "link")
-if d:
-yield it.findtext(ns + "title", ""),
-(link.get("href") if link is not None else ""),
-parse_iso(d)
-def news():
-seen, hits = set(), []
-for url in FEEDS:
-try:
-for title, link, when in
-feed_items(url):
-if when.tzinfo is None:
-when =
-when.replace(tzinfo=dt.timezone.utc)
-if NOW - when >
-dt.timedelta(minutes=65) or title in seen:
-continue
-if any(k in title.lower() for k in
-KEYWORDS):
-seen.add(title)
-hits.append((title, link))
-except Exception as e:
-print(f"feed {url} failed: {e}",
-file=sys.stderr)
-for title, link in hits[:8]:
-send(f'📰 <b>{html.escape(title)}
-</b>\n{link}')
-if __name__ == "__main__":
-mode = sys.argv[1] if len(sys.argv) > 1 else
-"digest"
-{"digest": digest, "remind": remind, "news":
-news}[mode]()
+exec(base64.b64decode(CODE).decode())
