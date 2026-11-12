@@ -1,246 +1,217 @@
-# Jarvis bot
-# python bot.py digest | remind | news
+"""
+Jarvis: personal Telegram bot.
+Modes (python bot.py <mode>):
+digest -> morning summary of football + CS
+matches in the next 24h
+remind -> ping for matches starting in ~20-30
+min (run every 10 min)
+news -> gaming/tech headlines from the last
+hour that match KEYWORDS (run hourly)
+No external dependencies, only the Python standard
+library.
+"""
 import os
 import sys
 import json
 import html
-import urllib.request as ur
+import urllib.request
 import datetime as dt
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 TZ = ZoneInfo("Asia/Tehran")
-UTC = dt.timezone.utc
-NOW = dt.datetime.now(UTC)
-HOUR = dt.timedelta(hours=1)
-TOKEN = os.environ["TELEGRAM_TOKEN"]
-CHAT = os.environ["TELEGRAM_CHAT_ID"]
-FB_KEY = os.environ.get("FOOTBALL_DATA_KEY")
-PS_KEY = os.environ.get("PANDASCORE_KEY")
-# ---- SETTINGS ----
-# Leagues: PL CL PD SA BL1 FL1 WC EC
-LEAGUES = "PL,CL,PD,SA,BL1,FL1,WC,EC"
-# Always shown
-ALWAYS = {"CL", "WC", "EC"}
-# Favorite teams, empty = all
-TEAMS = []
-# CS tiers
-TIERS = {"s", "a"}
-# CS teams always shown
-CS_TEAMS = ["Vitality", "FURIA"]
+NOW = dt.datetime.now(dt.timezone.utc)
+TG_TOKEN = os.environ["TELEGRAM_TOKEN"]
+TG_CHAT = os.environ["TELEGRAM_CHAT_ID"]
+FOOTBALL_KEY = os.environ.get("FOOTBALL_DATA_KEY")
+PANDA_KEY = os.environ.get("PANDASCORE_KEY")
+# ---------------- EDIT THESE ----------------
+# football-data.org free competitions: PL, CL, PD
+(La Liga), SA, BL1, FL1, WC, EC
+COMPETITIONS = "PL,CL,PD,SA,BL1,FL1,WC,EC"
+ALWAYS_SHOW = {"CL", "WC", "EC"} # always
+shown
+FAVORITE_TEAMS = [] # e.g.
+["Barcelona", "Real Madrid"]; empty = all league
+matches
+CS_TIERS = {"s", "a"} #
+PandaScore tournament tiers to include
+CS_FAVORITES = ["Vitality", "FURIA"] #
+always shown, any tier
 FEEDS = [
 "https://feeds.ign.com/ign/news",
 "https://www.theverge.com/rss/index.xml",
 "https://www.eurogamer.net/feed",
 ]
-WORDS = [
-"gta", "ps6", "playstation 6",
-"switch 2", "xbox", "nintendo",
-"steam", "valve", "counter-strike",
-"cs2", "nvidia", "rtx", "amd",
-"release date", "announced",
-"layoffs", "acquires", "openai",
-"anthropic", "apple", "iphone",
-"elden ring", "hollow knight",
-"witcher", "cyberpunk",
-"battlefield", "call of duty",
+KEYWORDS = [
+"gta", "ps6", "playstation 6", "switch 2",
+"xbox", "nintendo", "steam", "valve",
+"counter-strike", "cs2", "nvidia", "rtx",
+"amd", "release date", "announced",
+"layoffs", "acquires", "acquisition",
+"openai", "anthropic", "apple", "iphone",
+"elden ring", "hollow knight", "witcher",
+"cyberpunk", "battlefield", "call of duty",
 ]
-# ---- END SETTINGS ----
-def get_json(url, headers):
-req = ur.Request(url, headers=headers)
-with ur.urlopen(req, timeout=30) as r:
+# --------------------------------------------
+def http_json(url, headers=None):
+req = urllib.request.Request(url,
+headers=headers or {})
+with urllib.request.urlopen(req, timeout=30)
+as r:
 return json.load(r)
-def iso(s):
-s = s.replace("Z", "+00:00")
-return dt.datetime.fromisoformat(s)
+def parse_iso(s):
+return
+dt.datetime.fromisoformat(s.replace("Z",
+"+00:00"))
 def send(text):
-body = {
-"chat_id": CHAT,
+data = json.dumps({
+"chat_id": TG_CHAT,
 "text": text,
 "parse_mode": "HTML",
 "disable_web_page_preview": True,
-}
-url = "https://api.telegram.org/bot"
-url = url + TOKEN + "/sendMessage"
-req = ur.Request(
-url,
-data=json.dumps(body).encode(),
-headers={
-"Content-Type": "application/json"
-},
+}).encode()
+req = urllib.request.Request(
+f"https://api.telegram.org/bot{TG_TOKEN}/sendMessa
+ge",
+data=data,
+headers={"Content-Type":
+"application/json"},
 )
-ur.urlopen(req, timeout=30).read()
-def football():
-if not FB_KEY:
+urllib.request.urlopen(req, timeout=30).read()
+def football_matches():
+if not FOOTBALL_KEY:
 return []
 d1 = NOW.date().isoformat()
-end = NOW + dt.timedelta(days=2)
-d2 = end.date().isoformat()
-url = (
-"https://api.football-data.org"
-"/v4/matches?dateFrom=" + d1
-+ "&dateTo=" + d2
-+ "&competitions=" + LEAGUES
-)
-hdr = {"X-Auth-Token": FB_KEY}
-data = get_json(url, hdr)
+d2 = (NOW +
+dt.timedelta(days=2)).date().isoformat()
+url = (f"https://api.footballdata.org/v4/matches?dateFrom={d1}&dateTo={d2}"
+f"&competitions={COMPETITIONS}")
 out = []
-for m in data.get("matches", []):
-comp = m["competition"]
-code = comp.get("code", "")
-home = m["homeTeam"]["name"]
-away = m["awayTeam"]["name"]
-names = (home + away).lower()
-if code not in ALWAYS and TEAMS:
-if not any(
-t.lower() in names
-for t in TEAMS
-):
+for m in http_json(url, {"X-Auth-Token":
+FOOTBALL_KEY}).get("matches", []):
+code = m["competition"].get("code", "")
+home, away = m["homeTeam"]["name"],
+m["awayTeam"]["name"]
+if code not in ALWAYS_SHOW and
+FAVORITE_TEAMS:
+if not any(t.lower() in (home +
+away).lower() for t in FAVORITE_TEAMS):
 continue
 out.append({
-"start": iso(m["utcDate"]),
-"title": home + " vs " + away,
-"comp": comp["name"],
+"start": parse_iso(m["utcDate"]),
+"title": f"{home} vs {away}",
+"comp": m["competition"]["name"],
 "icon": "⚽",
 })
 return out
-def cs():
-if not PS_KEY:
+def cs_matches():
+if not PANDA_KEY:
 return []
-url = (
-"https://api.pandascore.co"
-"/csgo/matches/upcoming"
-"?sort=begin_at&page[size]=50"
-)
-hdr = {"Authorization": "Bearer " + PS_KEY}
+url =
+"https://api.pandascore.co/csgo/matches/upcoming?
+sort=begin_at&page[size]=50"
 out = []
-for m in get_json(url, hdr):
+for m in http_json(url, {"Authorization":
+f"Bearer {PANDA_KEY}"}):
 if not m.get("begin_at"):
 continue
-opps = m.get("opponents", [])
-names = [
-o["opponent"]["name"]
-for o in opps
-if o.get("opponent")
-]
-if names:
-title = " vs ".join(names)
-else:
-title = m.get("name", "TBD")
-tour = m.get("tournament") or {}
-tier = (tour.get("tier") or "").lower()
-low = title.lower()
-fav = any(
-f.lower() in low
-for f in CS_TEAMS
-)
-if tier not in TIERS and not fav:
+names = [o["opponent"]["name"] for o in
+m.get("opponents", []) if o.get("opponent")]
+title = " vs ".join(names) if names else
+m.get("name", "TBD")
+tier = ((m.get("tournament") or
+{}).get("tier") or "").lower()
+fav = any(f.lower() in title.lower() for f
+in CS_FAVORITES)
+if tier not in CS_TIERS and not fav:
 continue
-lg = m.get("league") or {}
-se = m.get("serie") or {}
-comp = lg.get("name", "")
-comp = comp + " " + se.get("full_name",
-"")
+league = (m.get("league") or
+{}).get("name", "")
+serie = (m.get("serie") or
+{}).get("full_name", "")
 out.append({
-"start": iso(m["begin_at"]),
+"start": parse_iso(m["begin_at"]),
 "title": title,
-"comp": comp.strip(),
+"comp": f"{league} {serie}".strip(),
 "icon": "🎮",
 })
 return out
 def upcoming(hours):
 items = []
-for fn in (football, cs):
+for fn in (football_matches, cs_matches):
 try:
 items += fn()
-except Exception as e:
-print(fn.__name__, e, file=sys.stderr)
-end = NOW + hours * HOUR
-items = [
-i for i in items
-if NOW <= i["start"] <= end
-]
+except Exception as e: # one broken
+source shouldn't kill the rest
+print(f"{fn.__name__} failed: {e}",
+file=sys.stderr)
+items = [i for i in items if NOW <= i["start"]
+<= NOW + dt.timedelta(hours=hours)]
 return sorted(items, key=lambda i: i["start"])
 def fmt(i):
-t = i["start"].astimezone(TZ)
-t = t.strftime("%H:%M")
-title = html.escape(i["title"])
-comp = html.escape(i["comp"])
-line1 = i["icon"] + " <b>" + title + "</b>"
-line2 = " " + t + " (Tehran) - " + comp
-return line1 + "\n" + line2
+t =
+i["start"].astimezone(TZ).strftime("%H:%M")
+return f'{i["icon"]} <b>
+{html.escape(i["title"])}</b>\n {t} (Tehran) ·
+{html.escape(i["comp"])}'
 def digest():
 items = upcoming(24)
 if not items:
-send(" بازی مهمی نداری 😴 (".صبح بخیر
+حبص ریخب �� وت ۲۴ تعاس آینده بازی یمهم ندارم")send
+(".برات
 return
-text = "\n\n".join(fmt(i) for i in items)
-send(" برنامه ۲۴ ساعت آینده ☀️ صبح بخیر :\n\n" + text)
++ "n\n\:حبص ریخب ️☀ همانرب ۲۴ تعاس آینده")send
+"\n\n".join(fmt(i) for i in items))
 def remind():
 for i in upcoming(1):
-secs = (i["start"] - NOW).total_seconds()
-mins = secs / 60
+mins = (i["start"] - NOW).total_seconds()
+/ 60
 if 20 < mins <= 30:
-msg = "⏰ ":نیم ساعت دیگه شروع میشه
-send(msg + "\n\n" + fmt(i))
++ "n\n\:مین تعاس هگید شروع هشیم ⏰")send
+fmt(i))
 def feed_items(url):
-req = ur.Request(
-url,
-headers={"User-Agent": "jarvis"},
-)
-raw = ur.urlopen(req, timeout=30).read()
-root = ET.fromstring(raw)
+root = ET.fromstring(urllib.request.urlopen(
+urllib.request.Request(url, headers=
+{"User-Agent": "jarvis-bot"}), timeout=30).read())
 ns = "{http://www.w3.org/2005/Atom}"
-for it in root.iter("item"):
+for it in root.iter("item"): # RSS
 d = it.findtext("pubDate")
 if d:
-yield (
-it.findtext("title", ""),
-it.findtext("link", ""),
-parsedate_to_datetime(d),
-)
-for it in root.iter(ns + "entry"):
-d = it.findtext(ns + "published")
-d = d or it.findtext(ns + "updated")
+yield it.findtext("title", ""),
+it.findtext("link", ""), parsedate_to_datetime(d)
+for it in root.iter(ns + "entry"): # Atom
+d = it.findtext(ns + "published") or
+it.findtext(ns + "updated")
 link = it.find(ns + "link")
-href = ""
-if link is not None:
-href = link.get("href")
 if d:
-title = it.findtext(ns + "title", "")
-yield title, href, iso(d)
+yield it.findtext(ns + "title", ""),
+(link.get("href") if link is not None else ""),
+parse_iso(d)
 def news():
-seen = set()
-hits = []
-maxage = dt.timedelta(minutes=65)
+seen, hits = set(), []
 for url in FEEDS:
 try:
 for title, link, when in
 feed_items(url):
 if when.tzinfo is None:
 when =
-when.replace(tzinfo=UTC)
-if NOW - when > maxage:
+when.replace(tzinfo=dt.timezone.utc)
+if NOW - when >
+dt.timedelta(minutes=65) or title in seen:
 continue
-if title in seen:
-continue
-low = title.lower()
-if any(k in low for k in WORDS):
+if any(k in title.lower() for k in
+KEYWORDS):
 seen.add(title)
 hits.append((title, link))
 except Exception as e:
-print("feed failed", e,
+print(f"feed {url} failed: {e}",
 file=sys.stderr)
 for title, link in hits[:8]:
-t = html.escape(title)
-send("📰 <b>" + t + "</b>\n" + link)
+send(f'📰 <b>{html.escape(title)}
+</b>\n{link}')
 if __name__ == "__main__":
-mode = "digest"
-if len(sys.argv) > 1:
-mode = sys.argv[1]
-modes = {
-"digest": digest,
-"remind": remind,
-"news": news,
-}
-modes[mode]()
+mode = sys.argv[1] if len(sys.argv) > 1 else
+"digest"
+{"digest": digest, "remind": remind, "news":
+news}[mode]()
