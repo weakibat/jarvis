@@ -1,0 +1,35 @@
+name: jarvis
+
+on:
+  schedule:
+    - cron: "30 4 * * *"   # 08:00 Tehran -> morning digest
+    - cron: "*/10 * * * *" # match reminders
+    - cron: "5 * * * *"    # hourly news check
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "digest | remind | news"
+        default: "digest"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+          PANDASCORE_KEY: ${{ secrets.PANDASCORE_KEY }}
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          case "${{ github.event.schedule }}" in
+            "30 4 * * *")   MODE=digest ;;
+            "*/10 * * * *") MODE=remind ;;
+            "5 * * * *")    MODE=news ;;
+          esac
+          python bot.py "${MODE:-digest}"
